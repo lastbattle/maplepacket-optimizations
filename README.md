@@ -6,8 +6,8 @@ This update focuses on improving hot paths in the packet codec without changing 
 
 ## Background
 
-This optimisation pass started by benchmarking the original MapleStory encryption library from OdinMS-based MapleStory sources against GPT-5.5 Pro and Claude Opus 4.8, using reward-guided iterative loops to test whether most of the obvious performance gains had already been exhausted. 
-The result was a surprise: there was still substantial low-hanging fruit, leading to large speed-ups across encryption, input, output, and the full send pipeline.
+This optimisation pass started by benchmarking the original MapleStory encryption library from OdinMS-based MapleStory sources against GPT-5.5 Pro and Claude Opus 4.8, using reward-guided iterative loops to test whether most of the obvious performance gains had already been exhausted with the excess tokens that I have.
+To my surprise! there was still substantial low-hanging fruit, leading to large speed-ups across encryption, input, output, and the full send pipeline.
 
 ## Overview
 
@@ -27,32 +27,6 @@ The affected areas are:
 - Fix the discovered 64-bit decode correctness issue before measuring performance.
 - Keep changes local and low-risk, avoiding broader architectural rewrites.
 
-## Files Changed
-
-```text
-benchmarks/PacketCodecBenchmark.java
-game/packets/output/GenericLittleEndianWriter.java
-game/packets/input/GenericLittleEndianAccessor.java
-game/packets/input/ByteInputStream.java
-game/packets/input/ByteArrayByteStream.java
-game/packets/input/InputStreamByteStream.java
-game/packets/input/RandomAccessByteStream.java
-game/packets/MapleAESOFB.java
-game/packets/MapleCustomEncryption.java
-```
-
-## Correctness Fix
-
-Before optimisation, `GenericLittleEndianAccessor.decode8()` failed a simple 64-bit round trip:
-
-```text
-encode8(0x0123456789ABCDEF) -> decode8() = 0xffffffff8acf1356
-```
-
-The root cause was that `decode8()` and `decode8_bigEndian()` shifted `int` values by 32 or more bits. In Java, `int` shift distances are masked to the `0..31` range before the expression is widened, so the high bytes were decoded incorrectly.
-
-The fix was to compose 64-bit primitive reads using `long` values, then delegate primitive reads through `ByteInputStream` implementations.
-
 ## Performance Summary
 
 Compared with the corrected baseline, the final keeper set produced the following improvements:
@@ -69,6 +43,11 @@ Compared with the corrected baseline, the final keeper set produced the followin
 | AES crypt 512 | 647,740 | 1,964,219 | 3.03x |
 | AES crypt mixed | 174,562 | 503,898 | 2.89x |
 | full send pipeline mixed | 44,446 | 116,832 | 2.63x |
+
+<img width="1188" height="690" alt="image" src="https://github.com/user-attachments/assets/4f1b8119-3de1-4761-aeb2-7240d3890e87" />
+
+<img width="1389" height="790" alt="image" src="https://github.com/user-attachments/assets/a0e57f5d-baaf-4600-ba45-98db033f6261" />
+
 
 ## Benchmark Methodology
 
