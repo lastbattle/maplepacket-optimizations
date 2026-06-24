@@ -6,8 +6,8 @@ This update focuses on improving hot paths in the packet codec without changing 
 
 ## Background
 
-This optimisation pass started by benchmarking the original MapleStory encryption library from OdinMS-based MapleStory sources against GPT-5.5 Pro and Claude Opus 4.8, using reward-guided iterative loops to test whether most of the obvious performance gains had already been exhausted with the excess tokens that I have.
-To my surprise! there was still substantial low-hanging fruit, leading to large speed-ups across encryption, input, output, and the full send pipeline.
+Using reward-guided iterative optimization loops, guided by GPT-5.5 Pro and Claude Opus 4.8, on the original MapleStory encryption library from OdinMS-based MapleStory sources to test whether the most obvious performance gains had already been exhausted in the library.
+To my surprise, there was still substantial low-hanging fruit. The resulting optimization pass delivered major speed-ups across encryption, input handling, output handling, and the full send pipeline.
 
 ## Overview
 
