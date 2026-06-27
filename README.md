@@ -2,12 +2,8 @@
 
 Benchmark-driven optimisation work for the Maple packet encryption, input, and output stack in OdinMS MapleStory encryption library.
 
-This update focuses on improving hot paths in the packet codec without changing encrypted output, packet structure, or IO semantics. The benchmark suite validates AES/OFB output, custom encryption output, round trips, and 64-bit primitive decoding before reporting throughput.
-
-## Background
-
 Using reward-guided iterative optimization loops, guided by GPT-5.5 Pro and Claude Opus 4.8, on the original MapleStory encryption library from OdinMS-based MapleStory sources to test whether the most obvious performance gains had already been exhausted in the library.
-To my surprise, there was still substantial low-hanging fruit. The resulting optimization pass delivered major speed-ups across encryption, input handling, output handling, and the full send pipeline.
+To my surprise, there was still substantial low-hanging fruit. The resulting optimization pass delivered major speed-ups across encryption, memory/ GC, input handling, output handling, and the full send pipeline without changing encrypted output, packet structure, or IO semantics. 
 
 ## Overview
 
@@ -33,20 +29,21 @@ Compared with the corrected baseline, the final keeper set produced the followin
 
 | Benchmark | Baseline best ops/s | Final avg ops/s | Improvement |
 |---|---:|---:|---:|
-| writer primitives | 1,762,965 | 15,106,089 | 8.57x |
-| writer buffer 1460 | 8,885,047 | 12,403,336 | 1.40x |
-| accessor primitives | 22,960,743 | 24,598,713 | 1.07x |
-| accessor buffer 1460 | 12,265,128 | 12,513,157 | 1.02x |
-| custom encrypt 512 | 242,129 | 573,783 | 2.37x |
-| custom decrypt 512 | 123,690 | 512,506 | 4.14x |
-| custom mixed roundtrip | 30,951 | 70,601 | 2.28x |
-| AES crypt 512 | 647,740 | 1,964,219 | 3.03x |
-| AES crypt mixed | 174,562 | 503,898 | 2.89x |
-| full send pipeline mixed | 44,446 | 116,832 | 2.63x |
+| writer primitives | 1,762,965 | 13,776,166 | 7.81x |
+| writer buffer 1460 | 8,885,047 | 11,546,920 | 1.30x |
+| accessor primitives | 22,960,743 | 23,921,469 | 1.04x |
+| accessor buffer 1460 | 12,265,128 | 11,670,174 | 0.95x |
+| custom encrypt 512 | 242,129 | 542,256 | 2.24x |
+| custom decrypt 512 | 123,690 | 504,756 | 4.08x |
+| custom mixed roundtrip | 30,951 | 68,912 | 2.23x |
+| AES crypt 512 | 647,740 | 2,083,894 | 3.22x |
+| AES crypt mixed | 174,562 | 527,807 | 3.02x |
+| full send pipeline mixed | 44,446 | 123,392 | 2.78x |
+| MINA handoff 1460 | 4,204,041 copy path | 10,822,299 view path | 2.57x |
+| fused send pipeline, isolated | 114,488 unfused | 123,723 fused | 1.08x |
 
-<img width="1188" height="690" alt="image" src="https://github.com/user-attachments/assets/4f1b8119-3de1-4761-aeb2-7240d3890e87" />
+<img width="1390" height="789" alt="image" src="https://github.com/user-attachments/assets/8c10c68f-cf2d-45fb-821a-1489d2b7aa6d" />
 
-<img width="1389" height="790" alt="image" src="https://github.com/user-attachments/assets/a0e57f5d-baaf-4600-ba45-98db033f6261" />
 
 
 ## Benchmark Methodology
@@ -76,8 +73,9 @@ The benchmark validates correctness before reporting throughput:
 
 ```powershell
 mvn -f .\pom.xml -DskipTests compile
-javac -cp '.\target\classes' -d '.\target\benchmark-classes' '.\benchmarks\PacketCodecBenchmark.java'
-java -cp '.\target\classes;.\target\benchmark-classes' PacketCodecBenchmark --repeats=5
+$mina = "$env:USERPROFILE\.m2\repository\org\apache\mina\mina-core\2.2.9\mina-core-2.2.9.jar"
+javac -cp ".\target\classes;$mina" -d '.\target\benchmark-classes' '.\benchmarks\PacketCodecBenchmark.java'
+java -Xms1g -Xmx1g -cp ".\target\classes;.\target\benchmark-classes;$mina" PacketCodecBenchmark --repeats=5
 ```
 
 ### Running Tests
@@ -93,6 +91,31 @@ BUILD SUCCESS
 ```
 
 ## Implementation Highlights
+
+### MINA 2.2 Handoff
+
+`COutPacket.getIoBuffer()` exposes a bounded, zero-copy view of the packet's
+backing array for direct use with `IoSession.write(...)`. Existing callers can
+continue using `getPacket()`, which retains its snapshot/copy semantics.
+
+Use the expected-size constructor to avoid growth copies while encoding:
+
+```java
+COutPacket packet = new COutPacket(expectedSize);
+// encode packet fields
+session.write(packet.getIoBuffer());
+```
+
+Treat `getIoBuffer()` as the terminal handoff; do not append to the packet after
+obtaining the view. In the full five-repeat benchmark, the 1460-byte view path
+averaged 10.89M ops/s versus 4.24M ops/s for `getPacket()` plus `IoBuffer.wrap`,
+a 2.57x improvement that removes one full-packet allocation and copy.
+
+Run only this benchmark with:
+
+```powershell
+java -cp ".\target\classes;.\target\benchmark-classes;$env:USERPROFILE\.m2\repository\org\apache\mina\mina-core\2.2.9\mina-core-2.2.9.jar" PacketCodecBenchmark --handoff-only --repeats=5
+```
 
 ### Output Writer
 
@@ -125,7 +148,7 @@ skip
 
 `GenericLittleEndianAccessor` now delegates primitive, buffer, and skip operations to the underlying stream and includes the corrected 64-bit little-endian and big-endian decode behaviour.
 
-### Custom Encryption
+### Custom Encryption [Shanda -- official name]
 
 `MapleCustomEncryption` was optimised by replacing repeated 8-bit rotate operations with lookup tables:
 
@@ -152,11 +175,35 @@ Two custom-encryption trials were rejected:
 - overlapping input/output blocks were avoided by using two stream buffers and swapping references
 - the 16-byte XOR path for full AES blocks was unrolled
 - a temporary 2-byte allocation in `checkPacket` was removed
+- the four fixed IV-mixing steps are unrolled
 
 Rejected AES trials:
 
 - reusing IV output storage and copying back was slower
 - swapping reusable IV buffers was still slower than the simpler `getNewIv` path in this benchmark
+
+### Allocation-aware Send Pipeline
+
+`MapleCustomEncryption.encryptData(...)` and
+`MapleAESOFB.cryptPacketData(...)` encrypt directly after the four-byte Maple
+header. The final packet is allocated once, populated once, and encrypted in
+place. This removes the temporary payload clone and the final payload copy.
+
+```java
+byte[] encryptedPacket = aes.encryptPacket(payload);
+session.write(IoBuffer.wrap(encryptedPacket));
+```
+
+| Mixed send metric | Previous pipeline | Fused pipeline | Change |
+|---|---:|---:|---:|
+| allocation | 4,193.6 bytes/op | 2,112.0 bytes/op | -49.6% |
+| constrained-heap collections | 26 | 13 | -50.0% |
+| constrained-heap GC time | 9 ms | 4 ms | -55.6% |
+| constrained-heap throughput | 114,846 ops/s | 124,105 ops/s | +8.1% |
+
+Allocation measurements use `ThreadMXBean` over 100,000 operations. GC results
+use 500,000 operations with G1 and a fixed 128 MiB heap. Run them with
+`--allocations` and `--gc`, respectively.
 
 ## Iteration Results
 
@@ -178,10 +225,23 @@ Throughput is reported in `ops/s`. Values are the best value per run unless mark
 | 11 | Reusable IV copy-back | 14,458,906 | 12,437,640 | 24,788,800 | 12,722,858 | 576,279 | 515,488 | 70,746 | 1,882,838 | 488,717 | 116,531 | Rejected: AES regressed |
 | 12 | Reusable IV swap | 4,335,044 | 12,658,614 | 24,780,909 | 12,658,419 | 576,025 | 540,594 | 72,441 | 1,892,056 | 491,556 | 116,724 | Rejected: AES still below kept version |
 | 13 | Final keeper set, 5-repeat average | 15,106,089 avg | 12,403,336 avg | 24,598,713 avg | 12,513,157 avg | 573,783 avg | 512,506 avg | 70,601 avg | 1,964,219 avg | 503,898 avg | 116,832 avg | Plateau |
+| 14 | MINA zero-copy packet handoff, 5-repeat average | 14,420,211 avg | 11,794,384 avg | 22,241,918 avg | 10,213,962 avg | 508,082 avg | 507,131 avg | 69,744 avg | 1,892,671 avg | 504,479 avg | 116,423 avg | Kept: 1460-byte handoff increased from 5,128,690 to 9,954,966 avg ops/s (1.94x) |
+| 15.1 | Allocation baseline | not measured | not measured | not measured | not measured | not measured | not measured | not measured | 1,959,458 avg | 503,151 avg | 113,363 avg | Baseline: 552.0 AES bytes/op, 2,105.6 AES-mixed bytes/op, 4,193.6 send bytes/op |
+| 15.2 | Update IV in place | not measured | not measured | not measured | not measured | not measured | not measured | not measured | 1,874,614 avg | 488,416 avg | 112,410 avg | Rejected: removed 24 bytes per packet but regressed AES throughput |
+| 15.3 | Store IV in AES scratch block | not measured | not measured | not measured | not measured | not measured | not measured | not measured | 1,945,197 avg | 504,723 avg | 114,742 avg | Rejected: fixed-heap AES baseline was 2,085,304 ops/s |
+| 15.4 | Reuse two dedicated IV arrays | not measured | not measured | not measured | not measured | not measured | not measured | not measured | 1,952,151 avg | 493,152 avg | 104,754 avg | Rejected: full pipeline regressed materially |
+| 15.5 | Unroll four IV-mixing calls | not measured | not measured | not measured | not measured | not measured | not measured | not measured | 2,094,050 avg | 545,261 avg | 114,691 avg | Kept: improved throughput without changing allocation |
+| 15.6 | Generic offset-based encryption | not measured | not measured | not measured | not measured | 456,906 avg | not measured | not measured | 1,889,011 avg | not measured | 92,764 avg | Rejected: custom baseline was 561,294, AES baseline 2,104,799, and previous pipeline 91,882 ops/s |
+| 15.7 | Fixed four-byte-header encryption loops | not measured | not measured | not measured | not measured | not measured | not measured | not measured | not measured | not measured | 124,826 avg | Kept: previous pipeline 114,287 ops/s; allocation reduced to 2,112.0 bytes/op |
+| 15.8 | Public `encryptPacket(payload)` fused API | not measured | not measured | not measured | not measured | not measured | not measured | not measured | not measured | not measured | 123,868 avg | Kept: previous pipeline 114,019 ops/s; API-level validation of fused path |
+| 15.9 | Constrained 128 MiB G1 run, 500,000 sends | not measured | not measured | not measured | not measured | not measured | not measured | not measured | not measured | not measured | 124,105 avg | Kept: previous pipeline 114,846 ops/s, collections 26 → 13, GC time 9 ms → 4 ms |
+| 15.10 | Final packet-aware API, 5-repeat full suite | 13,776,166 avg | 11,546,920 avg | 23,921,469 avg | 11,670,174 avg | 542,256 avg | 504,756 avg | 68,912 avg | 2,083,894 avg | 527,807 avg | 123,392 avg | Final full-suite results after `encryptData()` became packet-aware; isolated fused pipeline averaged 123,723 versus 114,488 unfused |
+
+<img width="1390" height="690" alt="image" src="https://github.com/user-attachments/assets/528c9474-40b5-4ea1-a40c-7cbb3b318ea1" />
 
 ## Plateau Decision
 
-The benchmark plateau was reached after iteration 10. Later trials targeted IV allocation reduction, rolling rotate index handling, and writer primitive scratch buffering. These changes either regressed the full send pipeline or only moved noise-level numbers while adding complexity.
+The throughput and allocation plateau was reached after iteration 15. Three IV-reuse layouts removed another 24 bytes per send but regressed AES throughput, so they were rejected. Generic offset encryption also halved temporary allocation but slowed the send path; fixed four-byte-header loops recovered the throughput and retained the allocation reduction.
 
 The final keeper set is the fastest stable combination measured with exact output validation.
 
