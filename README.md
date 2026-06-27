@@ -92,6 +92,78 @@ BUILD SUCCESS
 
 ## Implementation Highlights
 
+### Mandatory MINA Encoder and Decoder Integration
+
+`MaplePacketEncoder.java` and `MaplePacketDecoder.java` are application code and
+are not included in this library. They **MUST** follow the packet layout below.
+`MapleAESOFB.crypt(...)` and `MapleCustomEncryption.encryptData(...)` preserve
+the first four bytes as the Maple packet header. Using the former payload-only
+integration will misalign the AES keystream and encryption will fail.
+
+`MaplePacketEncoder.java`:
+
+```java
+@Override
+public void encode(final IoSession session, final Object message,
+        final ProtocolEncoderOutput out) throws Exception {
+    final Client client = (Client) session.getAttribute(Client.SOCKET_CLIENT_STATE_KEY);
+
+    if (client != null) {
+        final MapleAESOFB send_crypto = client.getSendCrypto();
+        out.write(IoBuffer.wrap(send_crypto.encryptPacket((byte[]) message)));
+    } else { // no client object created yet, send unencrypted (hello)
+        out.write(IoBuffer.wrap((byte[]) message));
+    }
+}
+```
+
+`MaplePacketDecoder.java`:
+
+```java
+@Override
+protected boolean doDecode(IoSession session, IoBuffer in,
+        ProtocolDecoderOutput out) throws Exception {
+    final DecoderState decoderState =
+            (DecoderState) session.getAttribute(DECODER_STATE_KEY);
+    final Client client =
+            (Client) session.getAttribute(Client.SOCKET_CLIENT_STATE_KEY);
+    if (client == null) {
+        return false;
+    }
+
+    client.getRecvPacketReentrantLock().lock();
+    try {
+        if (decoderState.packetlength == -1) {
+            if (in.remaining() < 4) {
+                return false;
+            }
+            final int packetHeader = in.getInt();
+            if (!client.getReceiveCrypto().checkPacket(packetHeader)) {
+                session.closeNow();
+                return false;
+            }
+            decoderState.packetlength = MapleAESOFB.getPacketLength(packetHeader);
+        }
+        if (in.remaining() < decoderState.packetlength) {
+            return false;
+        }
+
+        final byte encryptedPacket[] = new byte[decoderState.packetlength + 4];
+        in.get(encryptedPacket, 4, decoderState.packetlength);
+        decoderState.packetlength = -1;
+
+        client.getReceiveCrypto().crypt(encryptedPacket);
+        final byte packet[] = new byte[encryptedPacket.length - 4];
+        System.arraycopy(encryptedPacket, 4, packet, 0, packet.length);
+        MapleCustomEncryption.decryptData(packet);
+        out.write(packet);
+    } finally {
+        client.getRecvPacketReentrantLock().unlock();
+    }
+    return true;
+}
+```
+
 ### MINA 2.2 Handoff
 
 `COutPacket.getIoBuffer()` exposes a bounded, zero-copy view of the packet's

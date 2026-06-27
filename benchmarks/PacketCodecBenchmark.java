@@ -317,15 +317,16 @@ public final class PacketCodecBenchmark {
     }
 
     private static void aesCrypt512(int index) {
-        byte[] data = PAYLOADS[2].clone();
+        byte[] data = framePayload(PAYLOADS[2]);
         AES_512.crypt(data);
-        blackhole += data[index & (data.length - 1)] & 0xff;
+        blackhole += data[4 + (index & (PAYLOADS[2].length - 1))] & 0xff;
     }
 
     private static void aesCryptMixed(int index) {
-        byte[] data = PAYLOADS[index % PAYLOADS.length].clone();
+        byte[] source = PAYLOADS[index % PAYLOADS.length];
+        byte[] data = framePayload(source);
         AES_MIXED.crypt(data);
-        blackhole += data[index & (data.length - 1)] & 0xff;
+        blackhole += data[4 + (index & (source.length - 1))] & 0xff;
     }
 
     private static void fullSendPipelineMixed(int index) {
@@ -333,7 +334,7 @@ public final class PacketCodecBenchmark {
         byte[] data = framePayload(source);
         byte[] packet = AES_FULL_PIPELINE.getPacketHeaderEx(source.length);
         MapleCustomEncryption.encryptData(data);
-        AES_FULL_PIPELINE.cryptPacketData(data);
+        AES_FULL_PIPELINE.crypt(data);
         System.arraycopy(data, 4, packet, 4, source.length);
         blackhole += packet[index & (packet.length - 1)] & 0xff;
     }
@@ -357,12 +358,12 @@ public final class PacketCodecBenchmark {
                 throw new IllegalStateException("MapleCustomEncryption round trip failed for length " + source.length);
             }
 
-            byte[] aesData = source.clone();
+            byte[] aesData = framePayload(source);
             MapleAESOFB first = new MapleAESOFB(IV.clone(), VERSION, false);
             first.crypt(aesData);
             MapleAESOFB second = new MapleAESOFB(IV.clone(), VERSION, false);
             second.crypt(aesData);
-            if (!Arrays.equals(source, aesData)) {
+            if (!Arrays.equals(source, Arrays.copyOfRange(aesData, 4, aesData.length))) {
                 throw new IllegalStateException("MapleAESOFB round trip failed for length " + source.length);
             }
         }
@@ -380,8 +381,9 @@ public final class PacketCodecBenchmark {
         byte[] custom512 = Arrays.copyOfRange(customPacket512, 4, customPacket512.length);
         assertDigest("custom-512", custom512, EXPECTED_CUSTOM_512_SHA256);
 
-        byte[] aes512 = PAYLOADS[2].clone();
-        new MapleAESOFB(IV.clone(), VERSION, false).crypt(aes512);
+        byte[] aesPacket512 = framePayload(PAYLOADS[2]);
+        new MapleAESOFB(IV.clone(), VERSION, false).crypt(aesPacket512);
+        byte[] aes512 = Arrays.copyOfRange(aesPacket512, 4, aesPacket512.length);
         assertDigest("aes-512", aes512, EXPECTED_AES_512_SHA256);
     }
 
@@ -390,8 +392,9 @@ public final class PacketCodecBenchmark {
         byte[] expectedCustomPacket = framePayload(source);
         MapleCustomEncryption.encryptData(expectedCustomPacket);
         byte[] expectedCustom = Arrays.copyOfRange(expectedCustomPacket, 4, expectedCustomPacket.length);
-        byte[] expectedAes = source.clone();
-        new MapleAESOFB(IV.clone(), VERSION, false).crypt(expectedAes);
+        byte[] expectedAesPacket = framePayload(source);
+        new MapleAESOFB(IV.clone(), VERSION, false).crypt(expectedAesPacket);
+        byte[] expectedAes = Arrays.copyOfRange(expectedAesPacket, 4, expectedAesPacket.length);
         byte[] packetCustom = new byte[source.length + 4];
         System.arraycopy(source, 0, packetCustom, 4, source.length);
         MapleCustomEncryption.encryptData(packetCustom);
@@ -400,7 +403,7 @@ public final class PacketCodecBenchmark {
         }
         byte[] packetAes = new byte[source.length + 4];
         System.arraycopy(source, 0, packetAes, 4, source.length);
-        new MapleAESOFB(IV.clone(), VERSION, false).cryptPacketData(packetAes);
+        new MapleAESOFB(IV.clone(), VERSION, false).crypt(packetAes);
         if (!Arrays.equals(expectedAes, Arrays.copyOfRange(packetAes, 4, packetAes.length))) {
             throw new IllegalStateException("packet AES output changed");
         }
@@ -409,7 +412,7 @@ public final class PacketCodecBenchmark {
         byte[] legacyPayload = framePayload(source);
         byte[] legacyPacket = legacyCipher.getPacketHeaderEx(source.length);
         MapleCustomEncryption.encryptData(legacyPayload);
-        legacyCipher.cryptPacketData(legacyPayload);
+        legacyCipher.crypt(legacyPayload);
         System.arraycopy(legacyPayload, 4, legacyPacket, 4, source.length);
         byte[] fusedPacket = new MapleAESOFB(IV.clone(), VERSION, false).encryptPacket(source);
         if (!Arrays.equals(legacyPacket, fusedPacket)) {
