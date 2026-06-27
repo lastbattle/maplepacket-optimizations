@@ -36,14 +36,15 @@ public class MapleCustomEncryption {
      * @param data The data to encrypt.
      * @return The encrypted data.
      */
-    public static final byte[] encryptData(final byte data[]) {
-        final int length = data.length;
+    public static byte[] encryptData(byte[] data) {
+        final int offset = 4;
+        final int length = data.length - offset;
 	for (int j = 0; j < 6; j++) {
 	    int remember = 0;
 	    int dataLength = length & 0xFF;
-            
+
 	    if (j % 2 == 0) {
-		for (int i = 0; i < length; i++) {
+		for (int i = offset; i < data.length; i++) {
 		    int cur = data[i] & 0xFF;
 		    cur = ROLL_LEFT_3[cur];
 		    cur = (cur + dataLength) & 0xFF;
@@ -56,7 +57,7 @@ public class MapleCustomEncryption {
 		    data[i] = (byte) cur;
 		}
 	    } else {
-		for (int i = length - 1; i >= 0; i--) {
+		for (int i = data.length - 1; i >= offset; i--) {
 		    int cur = data[i] & 0xFF;
 		    cur = ROLL_LEFT_4[cur];
 		    cur = (cur + dataLength) & 0xFF;
@@ -68,7 +69,6 @@ public class MapleCustomEncryption {
 		    data[i] = (byte) cur;
 		}
 	    }
-	    //System.out.println("enc after iteration " + j + ": " + HexTool.toString(data) + " al: " + al);
 	}
 	return data;
     }
@@ -114,8 +114,8 @@ public class MapleCustomEncryption {
 		    dataLength = (dataLength - 1) & 0xFF;
 		}
 	    }
-	    //System.out.println("dec after iteration " + j + ": " + HexTool.toString(data));
 	}
 	return data;
     }
+
 }

@@ -10,7 +10,7 @@ import org.apache.mina.core.buffer.IoBuffer;
  * @version 1.0
  * @since Revision 323
  */
-public class ByteBufferLittleEndianWriter { //  extends GenericLittleEndianWriter
+public class ByteBufferLittleEndianWriter {
 
     private IoBuffer bb;
 
@@ -39,7 +39,6 @@ public class ByteBufferLittleEndianWriter { //  extends GenericLittleEndianWrite
     public ByteBufferLittleEndianWriter(int initialSize, boolean autoExpand) {
 	bb = IoBuffer.allocate(initialSize);
 	bb.setAutoExpand(autoExpand);
-//	setByteOutputStream(bb);
     }
 
     /**

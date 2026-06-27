@@ -186,8 +186,7 @@ public class GenericLittleEndianAccessor implements LittleEndianAccessor {
 	final byte ret[] = new byte[n];
 	bs.readBytes(ret, 0, n);
         final String retString = new String(ret, CHARSET);
-        //System.out.println("Decoded string: [" + retString.length() + "] " + retString);
-	return retString;
+        return retString;
     }
 
     /**

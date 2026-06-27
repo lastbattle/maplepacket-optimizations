@@ -25,7 +25,6 @@ public class GenericLittleEndianWriter implements LittleEndianWriter {
     private static final byte[] ZERO_BYTES = new byte[256];
     
     private ByteArrayOutputStream bos;
- //   public int pos = 0;
 
     /**
      * Class constructor - Protected to prevent instantiation with no arguments.
@@ -85,10 +84,9 @@ public class GenericLittleEndianWriter implements LittleEndianWriter {
      *
      * @param b The byte to write.
      */
-    @Override
+	@Override
     public void encode1(byte b) {
 	bos.write(b);
-//	pos++;
     }
 
     /**
@@ -99,7 +97,6 @@ public class GenericLittleEndianWriter implements LittleEndianWriter {
     @Override
     public void encode1(int b) {
 	bos.write((byte) b);
-//	pos++;
     }
 
     /**
@@ -163,7 +160,6 @@ public class GenericLittleEndianWriter implements LittleEndianWriter {
     @Override
     public void encodeAsciiString(String s) {
         byte[] buffer = s.getBytes(CHARSET);
-        //System.out.println("Buffer: [Len = " + buffer.length + "] ");
 	encodeBuffer(buffer);
     }
 

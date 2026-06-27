@@ -1,11 +1,11 @@
 package game.packets.output;
 
 import game.SendPacketOpcode;
-import java.io.ByteArrayOutputStream;
 import game.packets.input.ByteArrayByteStream;
 import game.packets.input.GenericSeekableLittleEndianAccessor;
 import game.packets.input.CInPacket;
 import game.tools.HexTool;
+import org.apache.mina.core.buffer.IoBuffer;
 
 /**
  * Writes a maplestory-packet little-endian stream of bytes.
@@ -16,12 +16,25 @@ import game.tools.HexTool;
  */
 public class COutPacket extends GenericLittleEndianWriter {
 
+    private static final int DEFAULT_CAPACITY = 20;
+    private final PacketByteArrayOutputStream packetStream;
+
     /**
      * Constructor - initializes this stream with a default size.
      */
     public COutPacket() {
-	ByteArrayOutputStream baos = new ByteArrayOutputStream(20);
-	super.setByteOutputStream(baos);
+        this(DEFAULT_CAPACITY);
+    }
+
+    /**
+     * Initializes this stream with enough room for the expected packet size.
+     * Supplying an accurate size avoids backing-array growth and copies.
+     *
+     * @param initialCapacity expected packet size in bytes
+     */
+    public COutPacket(int initialCapacity) {
+        packetStream = new PacketByteArrayOutputStream(initialCapacity);
+        super.setByteOutputStream(packetStream);
     }
 
     /**
@@ -30,8 +43,8 @@ public class COutPacket extends GenericLittleEndianWriter {
      * @param packetHeader the packet header
      */
     public COutPacket(SendPacketOpcode packetHeader) {
-	ByteArrayOutputStream baos = new ByteArrayOutputStream(20);
-	super.setByteOutputStream(baos);
+        packetStream = new PacketByteArrayOutputStream(DEFAULT_CAPACITY);
+        super.setByteOutputStream(packetStream);
 
         super.encode2(packetHeader.getValue());
     }
@@ -43,9 +56,18 @@ public class COutPacket extends GenericLittleEndianWriter {
      * @return A <code>MaplePacket</code> with the bytes in this stream.
      */
     public byte[] getPacket() {
-	//MaplePacket packet = new ByteArrayMaplePacket(baos.toByteArray());
-	//System.out.println("Packet to be sent:\n" +packet.toString() + "\n\n");
 	return getBao().toByteArray();
+    }
+
+    /**
+     * Returns a zero-copy view of this packet for {@code IoSession.write(...)}.
+     * Treat this as the terminal handoff: later writes may grow the packet and
+     * are not guaranteed to be visible through a previously returned view.
+     *
+     * @return a new MINA buffer view positioned at the first packet byte
+     */
+    public IoBuffer getIoBuffer() {
+        return packetStream.asIoBuffer();
     }
     
     /**
